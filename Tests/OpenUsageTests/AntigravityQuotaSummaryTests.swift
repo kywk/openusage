@@ -23,9 +23,12 @@ final class AntigravityQuotaSummaryTests: XCTestCase {
         return periodMs
     }
 
-    /// All four buckets, in scrambled group order, with the shapes seen in live probes.
+    /// All five buckets, in scrambled group order, with the shapes seen in live probes.
     private let fullGroupsJSON = """
     "groups":[
+      {"displayName":"Gemini 4 Argon","buckets":[
+        {"bucketId":"gemini-argon-wtu-weekly","displayName":"Gemini 4 Argon Weekly Limit","window":"weekly","remainingFraction":0.8,"resetTime":"2026-07-06T07:00:00Z"}
+      ]},
       {"displayName":"Claude and other models","buckets":[
         {"bucketId":"3p-weekly","displayName":"Weekly","window":"weekly","remainingFraction":1,"resetTime":"2026-07-06T07:00:00Z"},
         {"bucketId":"3p-5h","displayName":"5-hour","window":"5h","remainingFraction":0.4,"resetTime":"2026-07-02T15:30:00Z"}
@@ -39,18 +42,19 @@ final class AntigravityQuotaSummaryTests: XCTestCase {
 
     // MARK: - Parser
 
-    func testWrappedAndBarePayloadsProduceIdenticalFourLines() {
+    func testWrappedAndBarePayloadsProduceIdenticalFiveLines() {
         let bare = AntigravityUsageMapper.parseQuotaSummary(Data("{\(fullGroupsJSON)}".utf8))
         let wrapped = AntigravityUsageMapper.parseQuotaSummary(Data("{\"response\":{\(fullGroupsJSON)}}".utf8))
         XCTAssertEqual(bare, wrapped)
 
         guard let lines = bare else { return XCTFail("full summary did not parse") }
-        XCTAssertEqual(lines.map(\.label), ["Session", "Weekly", "Claude", "Claude Weekly"])
-        XCTAssertEqual(lines.map { used($0) }, [25, 10, 60, 0])
+        XCTAssertEqual(lines.map(\.label), ["Session", "Weekly", "Argon Weekly", "Claude", "Claude Weekly"])
+        XCTAssertEqual(lines.map { used($0) }, [25, 10, 20, 60, 0])
         XCTAssertEqual(resetsAt(lines[0]), OpenUsageISO8601.date(from: "2026-07-02T16:00:00Z"))
-        XCTAssertEqual(resetsAt(lines[2]), OpenUsageISO8601.date(from: "2026-07-02T15:30:00Z"))
+        XCTAssertEqual(resetsAt(lines[2]), OpenUsageISO8601.date(from: "2026-07-06T07:00:00Z"))
+        XCTAssertEqual(resetsAt(lines[3]), OpenUsageISO8601.date(from: "2026-07-02T15:30:00Z"))
         XCTAssertEqual(lines.map { periodMs($0) }, [
-            MetricPeriod.sessionMs, MetricPeriod.weekMs, MetricPeriod.sessionMs, MetricPeriod.weekMs
+            MetricPeriod.sessionMs, MetricPeriod.weekMs, MetricPeriod.weekMs, MetricPeriod.sessionMs, MetricPeriod.weekMs
         ])
     }
 
@@ -142,6 +146,29 @@ final class AntigravityQuotaSummaryTests: XCTestCase {
         XCTAssertEqual(AntigravityUsageMapper.parseQuotaSummary(Data(#"{"response":{"groups":[]}}"#.utf8)), [])
     }
 
+    func testArgonWeeklyBothBucketIDsSupportedAndDeduplicated() {
+        let aliasOnly = """
+        {"groups":[{"buckets":[
+          {"bucketId":"gemini-argon-weekly","remainingFraction":0.75}
+        ]}]}
+        """
+        let aliasLines = AntigravityUsageMapper.parseQuotaSummary(Data(aliasOnly.utf8))
+        XCTAssertEqual(aliasLines?.map(\.label), ["Argon Weekly"])
+        XCTAssertEqual(used(aliasLines?.first), 25)
+
+        // When both gemini-argon-wtu-weekly and gemini-argon-weekly are present,
+        // it must emit Argon Weekly once without duplicates.
+        let both = """
+        {"groups":[{"buckets":[
+          {"bucketId":"gemini-argon-wtu-weekly","remainingFraction":0.9},
+          {"bucketId":"gemini-argon-weekly","remainingFraction":0.4}
+        ]}]}
+        """
+        let bothLines = AntigravityUsageMapper.parseQuotaSummary(Data(both.utf8))
+        XCTAssertEqual(bothLines?.map(\.label), ["Argon Weekly"])
+        XCTAssertEqual(used(bothLines?.first), 10)
+    }
+
     // MARK: - Label binding (metricLabel == MetricLine.label, exact string)
 
     @MainActor
@@ -180,7 +207,7 @@ final class AntigravityQuotaSummaryTests: XCTestCase {
     }
 
     @MainActor
-    func testCloudCodeSummaryProducesFourMetersAndPlan() async {
+    func testCloudCodeSummaryProducesFiveMetersAndPlan() async {
         let groupsJSON = fullGroupsJSON
         let routing = RoutingHTTPClient { request in
             let path = request.url.path
@@ -197,8 +224,8 @@ final class AntigravityQuotaSummaryTests: XCTestCase {
 
         let snapshot = await provider.refresh()
         XCTAssertEqual(snapshot.plan, "Pro")
-        XCTAssertEqual(snapshot.lines.map(\.label), ["Session", "Weekly", "Claude", "Claude Weekly"])
-        XCTAssertEqual(snapshot.lines.map { used($0) }, [25, 10, 60, 0])
+        XCTAssertEqual(snapshot.lines.map(\.label), ["Session", "Weekly", "Argon Weekly", "Claude", "Claude Weekly"])
+        XCTAssertEqual(snapshot.lines.map { used($0) }, [25, 10, 20, 60, 0])
         XCTAssertFalse(routing.requests.contains { $0.url.path.contains("fetchAvailableModels") },
                        "a parsed summary must not touch the legacy model endpoints")
     }
@@ -261,8 +288,8 @@ final class AntigravityQuotaSummaryTests: XCTestCase {
 
         let snapshot = await provider.refresh()
         // Summary values win — not the single 1%-used line the legacy GetUserStatus configs would pool to.
-        XCTAssertEqual(snapshot.lines.map(\.label), ["Session", "Weekly", "Claude", "Claude Weekly"])
-        XCTAssertEqual(snapshot.lines.map { used($0) }, [25, 10, 60, 0])
+        XCTAssertEqual(snapshot.lines.map(\.label), ["Session", "Weekly", "Argon Weekly", "Claude", "Claude Weekly"])
+        XCTAssertEqual(snapshot.lines.map { used($0) }, [25, 10, 20, 60, 0])
         XCTAssertEqual(snapshot.plan, "Pro")
         XCTAssertFalse(routing.requests.contains { $0.url.path.hasSuffix("/GetCommandModelConfigs") })
     }

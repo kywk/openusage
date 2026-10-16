@@ -14,11 +14,13 @@ import Foundation
 enum AntigravityMetric {
     static let geminiID = "antigravity.geminiPro"
     static let geminiWeeklyID = "antigravity.geminiWeekly"
+    static let argonWeeklyID = "antigravity.argonWeekly"
     static let claudeID = "antigravity.claude"
     static let claudeWeeklyID = "antigravity.claudeWeekly"
 
     static let sessionLabel = "Session"
     static let weeklyLabel = "Weekly"
+    static let argonWeeklyLabel = "Argon Weekly"
     static let claudeLabel = "Claude"
     static let claudeWeeklyLabel = "Claude Weekly"
 }

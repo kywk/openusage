@@ -31,18 +31,20 @@ enum AntigravityUsageMapper {
 
     // MARK: - Quota summary (the authoritative source)
 
-    /// The four pool buckets `RetrieveUserQuotaSummary` reports, matched by **exact `bucketId` only** —
+    /// The pool buckets `RetrieveUserQuotaSummary` reports, matched by **exact `bucketId` only** —
     /// a future bucket (e.g. `gemini-image-5h`) must never silently join a pool, and pool identity is
     /// never inferred from `displayName`/`window`.
     static let summaryBuckets: [(bucketID: String, label: String, periodMs: Int)] = [
         ("gemini-5h", AntigravityMetric.sessionLabel, MetricPeriod.sessionMs),
         ("gemini-weekly", AntigravityMetric.weeklyLabel, MetricPeriod.weekMs),
+        ("gemini-argon-wtu-weekly", AntigravityMetric.argonWeeklyLabel, MetricPeriod.weekMs),
+        ("gemini-argon-weekly", AntigravityMetric.argonWeeklyLabel, MetricPeriod.weekMs),
         ("3p-5h", AntigravityMetric.claudeLabel, MetricPeriod.sessionMs),
         ("3p-weekly", AntigravityMetric.claudeWeeklyLabel, MetricPeriod.weekMs)
     ]
 
-    /// `RetrieveUserQuotaSummary` → up to four pool meters, ordered Session, Weekly, Claude,
-    /// Claude Weekly. Accepts both the LS envelope (`{"response": {"groups": …}}`) and the bare remote
+    /// `RetrieveUserQuotaSummary` → up to five pool meters, ordered Session, Weekly, Argon Weekly,
+    /// Claude, Claude Weekly. Accepts both the LS envelope (`{"response": {"groups": …}}`) and the bare remote
     /// payload (`{"groups": …}`).
     ///
     /// Nil means "not a summary" (undecodable body / no `groups` anywhere) and the caller may fall back
@@ -74,8 +76,10 @@ enum AntigravityUsageMapper {
             pooled[id] = (fraction, bucket.resetTime.flatMap { OpenUsageISO8601.date(from: $0) })
         }
 
+        var emittedLabels: Set<String> = []
         return summaryBuckets.compactMap { spec in
             guard let entry = pooled[spec.bucketID] else { return nil }
+            guard emittedLabels.insert(spec.label).inserted else { return nil }
             return line(pool: spec.label, fraction: entry.fraction, resetTime: entry.resetTime, periodMs: spec.periodMs)
         }
     }

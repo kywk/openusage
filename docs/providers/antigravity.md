@@ -4,12 +4,13 @@ Tracks pool quotas for Antigravity (Google's AI IDE) using credentials the app o
 
 ## What it tracks
 
-Antigravity has two shared quota pools, and each pool has two windows — a rolling 5-hour window and a weekly window:
+Antigravity tracks quota across shared and dedicated model pools with rolling 5-hour and weekly windows:
 
 | Metric | Meaning |
 |---|---|
 | Session | The shared Gemini pool (Pro and Flash draw from the same quota), rolling 5-hour window |
 | Weekly | The same Gemini pool's weekly window |
+| Argon Weekly | Gemini 4 Argon weekly window (separate quota for paid Pro plans; shared with Gemini on Ultra) |
 | Claude | The shared non-Gemini pool (Claude, GPT-OSS, …), rolling 5-hour window |
 | Claude Weekly | The same non-Gemini pool's weekly window |
 | Usage Trend | Daily token usage from local Antigravity conversations |
@@ -17,7 +18,7 @@ Antigravity has two shared quota pools, and each pool has two windows — a roll
 
 When Antigravity reports your subscription tier (such as `Pro` or `Ultra`), OpenUsage shows it beside the provider name.
 
-Gemini Pro and Gemini Flash are one pool: using either model drains the same quota, so OpenUsage shows one meter per window instead of separate Pro and Flash meters. That pair is named Session and Weekly to match the other providers' rows. Every non-Gemini model shares the second pool, shown under the Claude name (like Codex's Spark pair). The quota API reports fractions, while token usage and estimated spend come separately from local conversation databases.
+Gemini Pro and Gemini Flash are one pool: using either model drains the same quota, so OpenUsage shows one meter per window instead of separate Pro and Flash meters. That pair is named Session and Weekly to match the other providers' rows. Gemini 4 Argon has a separate weekly quota on Pro plans, shown as Argon Weekly. Every non-Gemini model shares another pool, shown under the Claude name (like Codex's Spark pair). The quota API reports fractions, while token usage and estimated spend come separately from local conversation databases.
 
 While a pool's rolling 5-hour window has no usage yet, that meter reads **Not started** on the trailing label instead of a reset countdown; hover explains that the session begins after your first message. The weekly meters always show a normal reset countdown.
 
