@@ -44,9 +44,14 @@ SIGN_ENTITLEMENTS="$ROOT_DIR/script/OpenUsage.local.entitlements.plist"
 
 pkill -x "$TARGET_NAME" >/dev/null 2>&1 || true
 
+SWIFT_BUILD_ARGS=()
+if [ -d "/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk" ] && ! xcode-select -p 2>/dev/null | grep -q Xcode; then
+  SWIFT_BUILD_ARGS+=(--sdk /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk)
+fi
+
 echo "==> swift build ($CONFIG)"
-swift build -c "$CONFIG"
-BUILD_DIR="$(swift build -c "$CONFIG" --show-bin-path)"
+swift build -c "$CONFIG" "${SWIFT_BUILD_ARGS[@]}"
+BUILD_DIR="$(swift build -c "$CONFIG" "${SWIFT_BUILD_ARGS[@]}" --show-bin-path)"
 BUILD_BINARY="$BUILD_DIR/$TARGET_NAME"
 BUILD_CLI_BINARY="$BUILD_DIR/openusage-cli"
 

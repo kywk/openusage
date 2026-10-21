@@ -295,7 +295,16 @@ final class AntigravityProvider: ProviderRuntime {
         case .authFailed:
             return .authFailed
         case .ok(let data):
-            if let lines = AntigravityUsageMapper.parseQuotaSummary(data) {
+            if var lines = AntigravityUsageMapper.parseQuotaSummary(data) {
+                // If the summary lacks the Gemini session pool (as daily Cloud Code does),
+                // augment it from fetchAvailableModels which carries the live rolling Gemini quota.
+                if !lines.contains(where: { $0.label == AntigravityMetric.sessionLabel }) {
+                    if case .ok(let modelsData) = await usageClient.cloudCode(path: AntigravityUsageClient.fetchModelsPath, token: token, userAgent: "antigravity", body: [:]),
+                       let geminiSession = AntigravityUsageMapper.buildLines(AntigravityUsageMapper.parseCloudCodeModels(modelsData))
+                        .first(where: { $0.label == AntigravityMetric.sessionLabel }) {
+                        lines.insert(geminiSession, at: 0)
+                    }
+                }
                 return .success(StrategyResult(plan: await loadPlan(token: token), lines: lines))
             }
             // 2xx but not a summary payload — the parser warned; fall to the legacy chain.

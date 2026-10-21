@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Finds a running Codeium-derived language server (Antigravity's bundled `language_server`, or the
 /// `agy` CLI) and returns the CSRF token + listening ports needed to call its local Connect-RPC service.
@@ -51,7 +52,10 @@ struct LanguageServerDiscovery: Sendable {
         for candidate in candidates {
             let csrf: String
             if options.csrfFlag.trimmingCharacters(in: .whitespaces).isEmpty {
-                csrf = ""
+                csrf = Self.resolveCSRF(for: candidate.pid, processRunner: processRunner)
+                if csrf.isEmpty {
+                    continue
+                }
             } else if let value = Self.extractFlag(command: candidate.command, flag: options.csrfFlag) {
                 csrf = value
             } else {
@@ -80,6 +84,50 @@ struct LanguageServerDiscovery: Sendable {
             return Result(pid: candidate.pid, csrf: csrf, ports: ports, extensionPort: extensionPort)
         }
 
+        return nil
+    }
+
+    // MARK: - CSRF discovery & caching
+
+    private static let csrfCache = OSAllocatedUnfairLock<[Int32: String]>(initialState: [:])
+
+    static func resolveCSRF(for pid: Int32, processRunner: ProcessRunning = SystemProcessRunner()) -> String {
+        if let cached = csrfCache.withLock({ $0[pid] }), !cached.isEmpty {
+            return cached
+        }
+        if let envToken = ProcessInfo.processInfo.environment["ANTIGRAVITY_CSRF_TOKEN"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !envToken.isEmpty {
+            csrfCache.withLock { $0[pid] = envToken }
+            return envToken
+        }
+        if let scanned = scanProcessEnvironmentForCSRF(processRunner: processRunner) {
+            csrfCache.withLock { $0[pid] = scanned }
+            return scanned
+        }
+        return ""
+    }
+
+    static func scanProcessEnvironmentForCSRF(processRunner: ProcessRunning = SystemProcessRunner()) -> String? {
+        guard let output = try? processRunner.run(
+            executable: "/bin/ps",
+            arguments: ["-ax", "-E", "-o", "command="],
+            environment: [:],
+            timeout: 3
+        ), output.succeeded else { return nil }
+
+        return extractCSRFToken(from: output.stdout)
+    }
+
+    static func extractCSRFToken(from text: String) -> String? {
+        let pattern = "ANTIGRAVITY_CSRF_TOKEN="
+        for line in text.split(whereSeparator: \.isNewline) {
+            guard let range = line.range(of: pattern) else { continue }
+            let rest = line[range.upperBound...]
+            let token = rest.prefix { $0 != " " && $0 != "\t" && $0 != "\n" && $0 != "\"" && $0 != "'" }
+            if !token.isEmpty {
+                return String(token)
+            }
+        }
         return nil
     }
 

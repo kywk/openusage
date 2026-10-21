@@ -20,10 +20,10 @@ enum TokenRefreshOutcome: Sendable {
 /// Google Cloud Code endpoints, and the Google OAuth token refresh.
 struct AntigravityUsageClient: Sendable {
     static let lsService = "exa.language_server_pb.LanguageServerService"
-    // The daily endpoint can omit Gemini quotas from a successful response; prefer production.
+    // agy and the CLI extension target daily-cloudcode-pa; prefer daily for live consumer quotas, falling back to production.
     static let cloudCodeURLs = [
-        "https://cloudcode-pa.googleapis.com",
-        "https://daily-cloudcode-pa.googleapis.com"
+        "https://daily-cloudcode-pa.googleapis.com",
+        "https://cloudcode-pa.googleapis.com"
     ]
     static let fetchModelsPath = "/v1internal:fetchAvailableModels"
     static let loadCodeAssistPath = "/v1internal:loadCodeAssist"

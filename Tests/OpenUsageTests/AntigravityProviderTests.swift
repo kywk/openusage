@@ -242,6 +242,12 @@ final class AntigravityProviderTests: XCTestCase {
         XCTAssertEqual(candidates.map(\.pid), [4276])
     }
 
+    func testExtractCSRFTokenFromEnvironment() {
+        let text = "USER=kywk ANTIGRAVITY_CSRF_TOKEN=tok-123-abc PWD=/tmp"
+        XCTAssertEqual(LanguageServerDiscovery.extractCSRFToken(from: text), "tok-123-abc")
+        XCTAssertNil(LanguageServerDiscovery.extractCSRFToken(from: "USER=kywk NO_TOKEN"))
+    }
+
     // MARK: - Keychain token extraction
 
     func testExtractTokenFromGoKeyringWrappedJSON() {
