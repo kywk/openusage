@@ -1,0 +1,49 @@
+name: Dev DMG
+
+# Fork-only helper: builds an installable dev app without any Apple signing secrets, so a machine
+# with only Command Line Tools can still test a branch. Not part of the upstream release path.
+# The app is ad-hoc signed and NOT notarized, so Gatekeeper quarantines the download; see the
+# release body for the one-line xattr command. It uses the .dev bundle id and has no Sparkle feed,
+# so it never touches an installed OpenUsage.app or its settings/keychain.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag, or SHA to build"
+        required: true
+        default: "fix/opencode-go-console-login-1418"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Build the dev app bundle
+        run: ./script/build_and_run.sh build
+
+      - name: Report the built version
+        run: |
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" dist/OpenUsage.app/Contents/Info.plist
+          codesign -dv dist/OpenUsage.app 2>&1 | grep -E "Identifier|Signature" || true
+
+      - name: Zip the app
+        run: ditto -c -k --keepParent dist/OpenUsage.app "OpenUsage-dev-${{ github.sha }}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenUsage-dev-${{ github.sha }}
+          path: OpenUsage-dev-${{ github.sha }}.zip
+          retention-days: 14
