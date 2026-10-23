@@ -22,13 +22,15 @@ subscription), the cap meters are hidden and you'll just see the spend tiles.
 
 ## Where credentials come from
 
-Use OpenCode as usual. OpenUsage reads the `opencode-go` API key from OpenCode's local data directory
+Use OpenCode as usual. OpenUsage reads the Go Bearer token from OpenCode's local data directory
 (`~/.local/share/opencode`, or `$OPENCODE_DATA_DIR` / `$XDG_DATA_HOME` if you've set them) and sends it
-as a Bearer token to the usage API. OpenCode 2 keeps that key in its local databases; OpenCode 1 keeps
-it in `auth.json`. Once OpenCode 2 has moved your logins into its databases, OpenUsage ignores that
-file. OpenCode 1 keeps using `auth.json`, even though recent 1.x versions already create the empty
-database table. Logging out of Go in OpenCode 2 is respected. There's no login prompt and no token
-to paste. Spend tiles still read the local SQLite logs in that same directory.
+as a Bearer token to the usage API: the `opencode-go` API key when present, otherwise the `opencode`
+Console OAuth `access` token (OpenCode 2 Console login stores no `opencode-go` row — the usage endpoint
+accepts that token). The Console token is read-only and never refreshed. OpenCode 2 keeps those keys in
+its local databases; OpenCode 1 keeps them in `auth.json`. Once OpenCode 2 has moved your logins into its
+databases, OpenUsage ignores that file. OpenCode 1 keeps using `auth.json`, even though recent 1.x
+versions already create the empty database table. Logging out of Go in OpenCode 2 is respected. There's
+no login prompt and no token to paste. Spend tiles still read the local SQLite logs in that same directory.
 
 When OpenCode uses its built-in ChatGPT Pro/Plus OAuth login, that usage belongs to the Codex
 subscription and appears in OpenUsage's **Codex** spend tiles and trend, including OpenCode 2's
@@ -71,9 +73,10 @@ still read 0% because less than 1% has been used.
 
 ## Under the hood
 
-Go windows: `GET https://opencode.ai/zen/go/v1/usage` with the `opencode-go` key as `Authorization:
-Bearer …`. The response is `{ usage: { rolling, weekly, monthly } }`, each with `percent` and
-`resetsAt`. A 401 is a rejected key; a 403 `EntitlementError` means no Go subscription.
+Go windows: `GET https://opencode.ai/zen/go/v1/usage` with the Go Bearer token (`opencode-go` key,
+or the `opencode` Console OAuth `access` token) as `Authorization: Bearer …`. The response is
+`{ usage: { rolling, weekly, monthly } }`, each with `percent` and `resetsAt`. A 401 is a rejected
+key; a 403 `EntitlementError` means no Go subscription.
 
 Spend tiles and trend: assistant-message `cost` and token fields from every `opencode*.db` in the data
 directory (OpenCode partitions its database by release channel — stable is `opencode.db`, the preview

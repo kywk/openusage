@@ -1,6 +1,7 @@
 import Foundation
 
-/// Calls OpenCode's official Go usage endpoint with the local `opencode-go` API key.
+/// Calls OpenCode's official Go usage endpoint with the local Go Bearer token (`opencode-go` key,
+/// or the `opencode` Console OAuth access token when no Go key exists).
 struct OpenCodeUsageClient: Sendable {
     static let usageURL = URL(string: "https://opencode.ai/zen/go/v1/usage")!
 
