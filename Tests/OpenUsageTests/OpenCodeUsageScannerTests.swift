@@ -219,6 +219,35 @@ final class OpenCodeUsageScannerTests: XCTestCase {
         XCTAssertEqual(try store.goAPIKey(), "oc_sk_test")
     }
 
+    func testRealOpenCode2DatabaseFallsBackToConsoleAccess() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        let path = dir.appendingPathComponent("opencode.db").path
+        let t = epochMs("2026-07-12T10:00:00.000Z")
+        let sqlite = SQLiteCLIAccessor()
+        try sqlite.execute(path: path, sql: """
+            CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, label TEXT, value TEXT,
+              connector_id TEXT, method_id TEXT, active INTEGER, time_created INTEGER, time_updated INTEGER);
+            CREATE TABLE migration (id TEXT PRIMARY KEY, time_completed INTEGER);
+            INSERT INTO migration VALUES ('20260805200742_import_legacy_credentials',\(t));
+            INSERT INTO credential VALUES ('c1','opencode','default','{"type":"oauth","access":"console-live","refresh":"r","expires":1786487065715}',NULL,NULL,1,\(t),\(t));
+            """)
+
+        let store = openCodeAuthStore(
+            files: FakeFiles(),
+            sqlite: sqlite,
+            databasePaths: [path]
+        )
+        XCTAssertEqual(try store.goAPIKey(), "console-live")
+
+        // An `opencode-go` key in the same database wins over Console access.
+        try sqlite.execute(path: path, sql: """
+            INSERT INTO credential VALUES ('c2','opencode-go','default','{"type":"api","key":"oc_go_live"}',NULL,NULL,1,\(t),\(t));
+            """)
+        XCTAssertEqual(try store.goAPIKey(), "oc_go_live")
+    }
+
     func testMigratedCopiesAreCountedOnce() async throws {
         let copy = openCodeRow("2026-07-12T11:00:00.000Z", "2.0", 500, "glm-5.2", "opencode-go", id: "msg-same")
         let other = openCodeRow("2026-07-12T10:00:00.000Z", "1.0", 300, "gpt-5.5", "opencode", id: "msg-other")
@@ -265,7 +294,9 @@ func openCodeAuthStore(
 /// each imported OpenCode 2 database's current `openai` row; a database without an entry has not
 /// imported credentials. `openCode1CredentialTables` models OpenCode 1.18's empty `credential`
 /// table without the import marker. `goKeys` holds each imported database's current `opencode-go`
-/// key (`""` for none); it also implies the import marker.
+/// key (`""` for none); it also implies the import marker. `consoleTokens` holds each imported
+/// database's current `opencode` Console OAuth access (`""` for none); it also implies the import
+/// marker.
 final class OpenCodeFakeSQLite: SQLiteAccessing, @unchecked Sendable {
     var data: [String: String]
     var failing: Set<String>
@@ -273,6 +304,7 @@ final class OpenCodeFakeSQLite: SQLiteAccessing, @unchecked Sendable {
     var tables: [String: String]
     var credentialTimes: [String: String]
     var goKeys: [String: String]
+    var consoleTokens: [String: String]
     var openCode1CredentialTables: Set<String>
     var lastDataSQL: String?
     var dataSQL: [String: String] = [:]
@@ -284,6 +316,7 @@ final class OpenCodeFakeSQLite: SQLiteAccessing, @unchecked Sendable {
         tables: [String: String] = [:],
         credentialTimes: [String: String] = [:],
         goKeys: [String: String] = [:],
+        consoleTokens: [String: String] = [:],
         openCode1CredentialTables: Set<String> = []
     ) {
         self.data = data
@@ -292,6 +325,7 @@ final class OpenCodeFakeSQLite: SQLiteAccessing, @unchecked Sendable {
         self.tables = tables
         self.credentialTimes = credentialTimes
         self.goKeys = goKeys
+        self.consoleTokens = consoleTokens
         self.openCode1CredentialTables = openCode1CredentialTables
     }
 
@@ -301,7 +335,7 @@ final class OpenCodeFakeSQLite: SQLiteAccessing, @unchecked Sendable {
             return tables[path] ?? "message,session_message"
         }
         if sql == OpenCodeAuthStore.credentialsImportedSQL {
-            return credentials[path] != nil || goKeys[path] != nil ? "1" : nil
+            return credentials[path] != nil || goKeys[path] != nil || consoleTokens[path] != nil ? "1" : nil
         }
         if sql == OpenCodeAuthStore.credentialSQLCurrentOpenAI {
             if openCode1CredentialTables.contains(path) { return nil }
@@ -314,7 +348,13 @@ final class OpenCodeFakeSQLite: SQLiteAccessing, @unchecked Sendable {
         if sql == OpenCodeAuthStore.credentialSQLGoKey {
             if openCode1CredentialTables.contains(path) { return nil }
             if let key = goKeys[path] { return key.isEmpty ? nil : key }
-            if credentials[path] != nil { return nil }
+            if credentials[path] != nil || consoleTokens[path] != nil { return nil }
+            throw SQLiteError.queryFailed("Parse error: no such table: credential")
+        }
+        if sql == OpenCodeAuthStore.credentialSQLConsoleAccess {
+            if openCode1CredentialTables.contains(path) { return nil }
+            if let token = consoleTokens[path] { return token.isEmpty ? nil : token }
+            if credentials[path] != nil || goKeys[path] != nil { return nil }
             throw SQLiteError.queryFailed("Parse error: no such table: credential")
         }
         if sql.contains("json_group_array") {

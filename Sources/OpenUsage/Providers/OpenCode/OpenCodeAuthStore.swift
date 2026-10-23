@@ -2,8 +2,11 @@ import Foundation
 
 /// Reads the OpenCode Go credential already on the machine. Local-only — never the network. The
 /// `opencode-go` key is both the first-run detection signal and the Bearer token for
-/// `GET /zen/go/v1/usage`, so it lives behind one loader. OpenCode 2 stores it in the channel
-/// databases' `credential` table; OpenCode 1 in `auth.json`.
+/// `GET /zen/go/v1/usage`, so it lives behind one loader. OpenCode 2 Console login
+/// (`opencode auth login opencode`) stores no `opencode-go` row — the Go subscription rides on the
+/// `opencode` OAuth row's `access` token, which the usage endpoint also accepts — so the loader
+/// falls back to that row's `access` (read-only; never refreshed, or OpenCode would be logged out).
+/// OpenCode 2 stores these in the channel databases' `credential` table; OpenCode 1 in `auth.json`.
 ///
 /// Codex attribution also needs to know whether OpenCode's `openai` provider is ChatGPT OAuth.
 /// OpenCode 2 moved that credential from `auth.json` into each channel database's `credential`
@@ -37,6 +40,17 @@ struct OpenCodeAuthStore: Sendable {
         LIMIT 1;
         """
 
+    /// The current `opencode` Console OAuth access token of one database, same ordering. This is the
+    /// fallback Bearer token for `GET /zen/go/v1/usage` when no `opencode-go` row exists (OpenCode 2
+    /// Console login). `COALESCE` also accepts a legacy `key` field on the same row.
+    static let credentialSQLConsoleAccess = """
+        SELECT COALESCE(json_extract(value,'$.access'), json_extract(value,'$.key'))
+        FROM credential
+        WHERE integration_id = 'opencode' AND (active IS NULL OR active = 1)
+        ORDER BY active DESC, time_updated DESC, id DESC
+        LIMIT 1;
+        """
+
     static let credentialsImportedSQL = "SELECT 1 FROM migration WHERE id = '20260805200742_import_legacy_credentials' LIMIT 1;"
 
     init(
@@ -61,12 +75,16 @@ struct OpenCodeAuthStore: Sendable {
         OpenCodePaths.authFilePath(dataDirectory: dataDirectory)
     }
 
-    /// The non-empty `opencode-go` API key, or `nil` when the user has not logged into OpenCode Go.
-    /// OpenCode 2 keeps it in each channel database's `credential` table; the first database holding
-    /// a key wins. `auth.json` stays live until OpenCode 2 imports it into a database; after that, a
-    /// logout must not be revived by the file. Reads only the `opencode-go` entry, tolerant of
-    /// unrelated sibling entries. A present file or database that can't be read throws
-    /// `credentialsUnreadable` so broken storage is never mistaken for logout.
+    /// The Bearer token for the Go usage API, or `nil` when the user has not logged into OpenCode Go.
+    /// Prefers the `opencode-go` API key; falls back to the `opencode` Console OAuth `access` token
+    /// (OpenCode 2 Console login stores no `opencode-go` row). OpenCode 2 keeps them in each channel
+    /// database's `credential` table; the first database holding either wins, with `opencode-go`
+    /// winning across databases. `auth.json` stays live until OpenCode 2 imports it into a database;
+    /// after that, a logout must not be revived by the file. Reads only the `opencode-go` and
+    /// `opencode` entries, tolerant of unrelated sibling entries. A present file or database that
+    /// can't be read throws `credentialsUnreadable` so broken storage is never mistaken for logout.
+    /// The Console token is read-only: it expires (~30 days) and must never be refreshed here, or
+    /// OpenCode would be logged out.
     func goAPIKey() throws -> String? {
         let paths: [String]
         do {
@@ -90,15 +108,41 @@ struct OpenCodeAuthStore: Sendable {
                 failure = error
             }
         }
+        // Second pass: Console login has no `opencode-go` row, so try the `opencode` OAuth row.
+        // Kept as its own pass so an `opencode-go` key in any database wins over Console access in
+        // another. Failures here also vote: an unreadable database must not read as logout.
+        for path in paths {
+            do {
+                guard try credentialsImported(path: path) else { continue }
+                let value = try sqlite.queryValue(path: path, sql: Self.credentialSQLConsoleAccess)
+                hasCredentialTable = true
+                if let token = value?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty {
+                    return token
+                }
+            } catch where Self.isMissingTable(error) {
+                continue
+            } catch {
+                failure = error
+            }
+        }
         if let failure {
             throw OpenCodeUsageError.credentialsUnreadable(detail: failure.localizedDescription)
         }
         if hasCredentialTable { return nil }
-        guard let object = try authObject(),
-              let entry = object["opencode-go"] as? [String: Any],
-              let key = entry["key"] as? String
-        else { return nil }
-        return key.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        guard let object = try authObject() else { return nil }
+        if let entry = object["opencode-go"] as? [String: Any],
+           let key = (entry["key"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty {
+            return key
+        }
+        if let entry = object["opencode"] as? [String: Any] {
+            if let access = (entry["access"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty {
+                return access
+            }
+            if let key = (entry["key"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty {
+                return key
+            }
+        }
+        return nil
     }
 
     /// The current `openai` credential: whether it is ChatGPT/Codex OAuth, and when its row was

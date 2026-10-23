@@ -99,9 +99,10 @@ final class OpenCodeProvider: ProviderRuntime {
     }
 
     func hasLocalCredentials() async -> Bool {
-        // Same sources as `refresh()`: the local `opencode-go` auth key, or any hosted usage already in
-        // the local database. Local-only, off the main actor. An unreadable auth.json is itself an
-        // OpenCode footprint — enable the provider so `refresh()` can surface the actionable error.
+        // Same sources as `refresh()`: the local Go Bearer token (`opencode-go` key or `opencode`
+        // Console OAuth access), or any hosted usage already in the local database. Local-only, off
+        // the main actor. An unreadable auth.json is itself an OpenCode footprint — enable the
+        // provider so `refresh()` can surface the actionable error.
         await loadOffMainActor { [authStore, usageScanner] in
             do {
                 if try authStore.goAPIKey() != nil { return true }

@@ -58,6 +58,38 @@ final class OpenCodeProviderTests: XCTestCase {
         XCTAssertTrue(has)
     }
 
+    func testHasLocalCredentialsViaConsoleAccess() async {
+        let provider = provider(
+            files: FakeFiles(),
+            scanner: OpenCodeUsageScanner(sqlite: OpenCodeFakeSQLite(), databasePaths: { [] }),
+            authSQLite: OpenCodeFakeSQLite(consoleTokens: ["/oc/opencode.db": "console-access"]),
+            authDatabasePaths: ["/oc/opencode.db"]
+        )
+        let has = await provider.hasLocalCredentials()
+        XCTAssertTrue(has)
+    }
+
+    func testRefreshUsesConsoleAccessWhenNoGoKey() async {
+        let path = "/oc/opencode.db"
+        let authSQLite = OpenCodeFakeSQLite(consoleTokens: [path: "console-access"])
+        let http = FakeHTTPClient(response: HTTPResponse(statusCode: 200, headers: [:], body: usageJSON()))
+        let snapshot = await provider(
+            files: FakeFiles(),
+            scanner: OpenCodeUsageScanner(sqlite: OpenCodeFakeSQLite(), databasePaths: { [] }),
+            client: OpenCodeUsageClient(http: http),
+            authSQLite: authSQLite,
+            authDatabasePaths: [path]
+        ).refresh()
+
+        XCTAssertEqual(snapshot.plan, "Go")
+        XCTAssertNil(snapshot.errorCategory)
+        XCTAssertEqual(http.requests.count, 1)
+        XCTAssertEqual(http.requests.first?.headers["Authorization"], "Bearer console-access")
+        XCTAssertNotNil(snapshot.line(label: "Session"))
+        XCTAssertNotNil(snapshot.line(label: "Weekly"))
+        XCTAssertNotNil(snapshot.line(label: "Monthly"))
+    }
+
     func testHasLocalCredentialsViaLocalUsageButNotForEmptyDatabase() async {
         func probe(db: String) async -> Bool {
             await provider(

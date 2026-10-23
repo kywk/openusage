@@ -41,6 +41,7 @@ final class OpenCodeAuthStoreTests: XCTestCase {
     private func goStore(
         auth: String? = nil,
         goKeys: [String: String] = [:],
+        consoleTokens: [String: String] = [:],
         credentials: [String: String] = [:],
         failing: Set<String> = [],
         openCode1Tables: Set<String> = [],
@@ -52,6 +53,7 @@ final class OpenCodeAuthStoreTests: XCTestCase {
                 failing: failing,
                 credentials: credentials,
                 goKeys: goKeys,
+                consoleTokens: consoleTokens,
                 openCode1CredentialTables: openCode1Tables
             ),
             databasePaths: paths
@@ -98,8 +100,70 @@ final class OpenCodeAuthStoreTests: XCTestCase {
         XCTAssertEqual(try loggedIn.goAPIKey(), "oc_live")
     }
 
+    func testConsoleAccessFallsBackWhenNoGoKey() throws {
+        let store = goStore(consoleTokens: ["/oc/opencode.db": " console-access "])
+        XCTAssertEqual(try store.goAPIKey(), "console-access")
+    }
+
+    func testGoKeyWinsOverConsoleAccessAcrossDatabases() throws {
+        let goFirst = goStore(
+            goKeys: ["/oc/opencode.db": "go-key"],
+            consoleTokens: ["/oc/opencode-next.db": "console-access"]
+        )
+        XCTAssertEqual(try goFirst.goAPIKey(), "go-key")
+
+        let goSecond = goStore(
+            goKeys: ["/oc/opencode-next.db": "go-key"],
+            consoleTokens: ["/oc/opencode.db": "console-access"]
+        )
+        XCTAssertEqual(try goSecond.goAPIKey(), "go-key")
+    }
+
+    func testConsoleLogoutInOpenCode2IsNotRevivedByAuthFile() throws {
+        let staleConsole = #"{"opencode":{"type":"oauth","access":"stale-access","refresh":"stale-refresh"}}"#
+        XCTAssertNil(try goStore(auth: staleConsole, consoleTokens: ["/oc/opencode.db": ""]).goAPIKey())
+        XCTAssertNil(try goStore(auth: staleAuth, consoleTokens: ["/oc/opencode.db": ""]).goAPIKey())
+    }
+
+    func testConsoleAccessFallsBackToAuthFileWithoutCredentialTable() throws {
+        let file = #"{"opencode":{"type":"oauth","access":" file-access ","refresh":"r"}}"#
+        XCTAssertEqual(try goStore(auth: file).goAPIKey(), "file-access")
+    }
+
+    func testGoKeyInAuthFileWinsOverConsoleAccess() throws {
+        let file = #"{"opencode-go":{"type":"api","key":"sk-file"},"opencode":{"type":"oauth","access":"file-access"}}"#
+        XCTAssertEqual(try goStore(auth: file).goAPIKey(), "sk-file")
+    }
+
+    func testConsoleAccessPrefersCredentialTableOverStaleAuthFile() throws {
+        let staleConsole = #"{"opencode":{"type":"oauth","access":"stale-access"}}"#
+        let store = goStore(auth: staleConsole, consoleTokens: ["/oc/opencode-next.db": " live-access "])
+        XCTAssertEqual(try store.goAPIKey(), "live-access")
+    }
+
+    func testConsoleAccessQuerySelectsCurrentRow() {
+        let sql = OpenCodeAuthStore.credentialSQLConsoleAccess
+        XCTAssertTrue(sql.contains("integration_id = 'opencode'"), sql)
+        XCTAssertTrue(sql.contains("json_extract(value,'$.access')"), sql)
+        XCTAssertTrue(sql.contains("(active IS NULL OR active = 1)"), sql)
+        XCTAssertTrue(sql.contains("ORDER BY active DESC, time_updated DESC, id DESC"), sql)
+    }
+
     func testUnreadableCredentialDatabaseThrowsInsteadOfFallingBack() {
         let store = goStore(auth: staleAuth, goKeys: ["/oc/opencode.db": ""], failing: ["/oc/opencode-next.db"])
+        XCTAssertThrowsError(try store.goAPIKey()) { error in
+            guard case OpenCodeUsageError.credentialsUnreadable = error else {
+                return XCTFail("expected credentialsUnreadable, got \(error)")
+            }
+        }
+    }
+
+    func testUnreadableConsoleDatabaseThrowsInsteadOfFallingBack() {
+        let store = goStore(
+            auth: #"{"opencode":{"type":"oauth","access":"stale-access"}}"#,
+            consoleTokens: ["/oc/opencode.db": ""],
+            failing: ["/oc/opencode-next.db"]
+        )
         XCTAssertThrowsError(try store.goAPIKey()) { error in
             guard case OpenCodeUsageError.credentialsUnreadable = error else {
                 return XCTFail("expected credentialsUnreadable, got \(error)")
