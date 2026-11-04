@@ -3,73 +3,53 @@ import XCTest
 
 @MainActor
 final class LayoutPersistenceTests: XCTestCase {
-    func testLoadsEveryExistingKeyAndFormat() throws {
-        let defaults = makeDefaults("LoadsExistingKeys")
-        defaults.set(try JSONEncoder().encode([PlacedWidget(descriptorID: "claude.session")]), forKey: "layout")
-        defaults.set(try JSONEncoder().encode(["cursor", "claude"]), forKey: "layout.providerOrder")
-        defaults.set(
-            try JSONEncoder().encode(["claude": ["claude.weekly", "claude.session"]]),
-            forKey: "layout.metricOrderByProvider"
+    func testSavesTheWholeLayoutUnderOneKey() {
+        let defaults = isolatedDefaults()
+        let state = LayoutState(
+            hiddenMetricIDs: ["claude@1.extra"],
+            providerOrder: ["cursor@2", "claude@1"],
+            metricOrderByProvider: ["claude@1": ["claude@1.weekly", "claude@1.session"]],
+            seededProviderIDs: ["claude@1", "cursor@2"]
         )
-        defaults.set(try JSONEncoder().encode(["claude.session"]), forKey: "layout.seededDefaults")
-        defaults.set(["claude.session"], forKey: "layout.menuBarPins")
-        defaults.set(["claude.weekly"], forKey: "layout.expandedMetrics")
-        defaults.set(["cursor.requests"], forKey: "layout.expandOnEnable")
-        defaults.set(["claude"], forKey: "layout.expandedProviders")
-        defaults.set(MenuBarStyle.bars.rawValue, forKey: "layout.menuBarStyle")
 
-        let persistence = LayoutPersistence(defaults: defaults, storageKey: "layout")
+        LayoutPersistence(defaults: defaults).save(state)
 
-        XCTAssertTrue(persistence.hasStoredLayout)
-        XCTAssertTrue(persistence.hasStoredSeededDefaults)
-        XCTAssertEqual(persistence.loadPlaced()?.map(\.descriptorID), ["claude.session"])
-        XCTAssertEqual(persistence.loadProviderOrder(), ["cursor", "claude"])
-        XCTAssertEqual(persistence.loadMetricOrder()?["claude"], ["claude.weekly", "claude.session"])
-        XCTAssertEqual(persistence.loadSeededDefaults(), ["claude.session"])
-        XCTAssertEqual(persistence.loadPins(), ["claude.session"])
-        XCTAssertEqual(persistence.loadExpandedMetrics(), ["claude.weekly"])
-        XCTAssertEqual(persistence.loadExpandOnEnable(), ["cursor.requests"])
-        XCTAssertEqual(persistence.loadExpandedProviders(), ["claude"])
-        XCTAssertEqual(persistence.loadMenuBarStyle(), .bars)
+        XCTAssertEqual(LayoutPersistence(defaults: defaults).load(), state)
+        XCTAssertEqual(defaults.dictionaryRepresentation().keys.filter { $0.hasPrefix("openusage.layout") }, ["openusage.layout.v2"])
     }
 
-    func testSavesEveryExistingKeyAndFormat() throws {
-        let defaults = makeDefaults("SavesExistingKeys")
-        let persistence = LayoutPersistence(defaults: defaults, storageKey: "layout")
+    func testALayoutWithStarsAndHiddenMetricsKeepsItsHiddenMetrics() throws {
+        let defaults = isolatedDefaults()
+        let saved: [String: Any] = [
+            "hiddenMetricIDs": ["claude.weekly", "claude.extra"],
+            "pinnedMetricIDs": ["claude.session", "codex.session"],
+            "providerOrder": ["codex", "claude", "cursor"],
+            "metricOrderByProvider": ["claude": ["claude.today", "claude.session"]],
+            "seededProviderIDs": ["claude", "codex", "cursor"],
+        ]
+        defaults.set(try JSONSerialization.data(withJSONObject: saved), forKey: LayoutPersistence.key)
 
-        persistence.savePlaced([PlacedWidget(descriptorID: "claude.session")])
-        persistence.saveProviderOrder(["cursor", "claude"])
-        persistence.saveMetricOrder(["claude": ["claude.weekly", "claude.session"]])
-        persistence.saveSeededDefaults(["claude.session"])
-        persistence.savePins(["claude.session"])
-        persistence.saveExpandedMetrics(["claude.weekly"])
-        persistence.saveExpandOnEnable(["cursor.requests"])
-        persistence.saveExpandedProviders(["claude"])
-        persistence.saveMenuBarStyle(.bars)
+        let store = LayoutStore(registry: .mock, defaults: defaults)
 
-        XCTAssertEqual(try decode([PlacedWidget].self, key: "layout", defaults: defaults).map(\.descriptorID), ["claude.session"])
-        XCTAssertEqual(try decode([String].self, key: "layout.providerOrder", defaults: defaults), ["cursor", "claude"])
-        XCTAssertEqual(
-            try decode([String: [String]].self, key: "layout.metricOrderByProvider", defaults: defaults)["claude"],
-            ["claude.weekly", "claude.session"]
-        )
-        XCTAssertEqual(try decode([String].self, key: "layout.seededDefaults", defaults: defaults), ["claude.session"])
-        XCTAssertEqual(Set(defaults.stringArray(forKey: "layout.menuBarPins") ?? []), ["claude.session"])
-        XCTAssertEqual(Set(defaults.stringArray(forKey: "layout.expandedMetrics") ?? []), ["claude.weekly"])
-        XCTAssertEqual(Set(defaults.stringArray(forKey: "layout.expandOnEnable") ?? []), ["cursor.requests"])
-        XCTAssertEqual(Set(defaults.stringArray(forKey: "layout.expandedProviders") ?? []), ["claude"])
-        XCTAssertEqual(defaults.string(forKey: "layout.menuBarStyle"), MenuBarStyle.bars.rawValue)
+        XCTAssertEqual(store.orderedProviders().map(\.id), ["codex", "claude", "cursor"], "the provider order survives")
+        XCTAssertEqual(store.orderedSupportedMetrics(for: "claude").prefix(2).map(\.id), ["claude.today", "claude.session"], "the metric order survives")
+        XCTAssertEqual(Set(MockData.descriptors.map(\.id)).subtracting(store.visibleDescriptors.map(\.id)), ["claude.weekly", "claude.extra"],
+                       "a metric saved as hidden stays hidden")
     }
 
-    private func decode<T: Decodable>(_ type: T.Type, key: String, defaults: UserDefaults) throws -> T {
-        let data = try XCTUnwrap(defaults.data(forKey: key))
-        return try JSONDecoder().decode(type, from: data)
-    }
+    func testALayoutSavedWithoutHiddenMetricsStillLoads() throws {
+        let defaults = isolatedDefaults()
+        let saved: [String: Any] = [
+            "providerOrder": ["codex", "claude", "cursor"],
+            "metricOrderByProvider": ["claude": ["claude.today", "claude.session"]],
+            "seededProviderIDs": ["claude", "codex", "cursor"],
+        ]
+        defaults.set(try JSONSerialization.data(withJSONObject: saved), forKey: LayoutPersistence.key)
 
-    private func makeDefaults(_ name: String) -> UserDefaults {
-        let suite = "OpenUsageTests.LayoutPersistence.\(name).\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defaults.removePersistentDomain(forName: suite)
-        return defaults
+        let store = LayoutStore(registry: .mock, defaults: defaults)
+
+        XCTAssertEqual(store.orderedProviders().map(\.id), ["codex", "claude", "cursor"])
+        XCTAssertEqual(store.orderedSupportedMetrics(for: "claude").prefix(2).map(\.id), ["claude.today", "claude.session"])
+        XCTAssertEqual(Set(store.visibleDescriptors.map(\.id)), Set(MockData.descriptors.map(\.id)))
     }
 }

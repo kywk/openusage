@@ -2,17 +2,17 @@ import Foundation
 
 struct CLIArguments: Equatable, Sendable {
     var providerID: String?
-    var force = false
     var showHelp = false
     var showVersion = false
+    var force = false
 
     static func parse(_ arguments: [String]) throws -> CLIArguments {
         var parsed = CLIArguments()
         for argument in arguments {
             switch argument {
-            case "--force": parsed.force = true
             case "-h", "--help": parsed.showHelp = true
             case "-v", "--version": parsed.showVersion = true
+            case "--force": parsed.force = true
             default:
                 if argument.hasPrefix("-") {
                     throw CLIError.usage("Unknown option: \(argument)")
@@ -29,5 +29,4 @@ struct CLIArguments: Equatable, Sendable {
 
 enum CLIError: Error, Equatable {
     case usage(String)
-    case appDefaultsUnavailable
 }
