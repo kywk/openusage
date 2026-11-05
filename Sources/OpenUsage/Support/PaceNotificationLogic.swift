@@ -1,10 +1,11 @@
 import Foundation
 
 enum PaceMilestone: String, CaseIterable, Hashable, Sendable {
-    case underTenPercent
-    /// Keeps its old raw value, so a saved switch stays on or off through the rename.
-    case underThirtyPercent = "healthyToClose"
+    /// The two levels keep their old raw values, so a saved switch stays on or off through the renames.
+    case critical = "underTenPercent"
+    case warning = "healthyToClose"
     case closeToRunningOut
+    case useItOrLoseIt
 }
 
 extension PaceMilestone {
@@ -13,27 +14,32 @@ extension PaceMilestone {
     /// The two levels follow what's left, the same rule as Priority. Only this one follows the pace.
     var isPace: Bool { self == .closeToRunningOut }
 
-    var settingSubtitle: String {
+    var isLevel: Bool { self == .critical || self == .warning }
+
+    func settingSubtitle(_ limits: PriorityLimits) -> String {
         switch self {
-        case .underTenPercent: return "A limit drops under 10%"
-        case .underThirtyPercent: return "A limit drops under 30%"
+        case .critical: return "A limit drops to \(limits.critical)% or less left"
+        case .warning: return "A limit drops to \(limits.warning)% or less left"
         case .closeToRunningOut: return "A limit may run out before its reset"
+        case .useItOrLoseIt: return "Over 50% left a day before its reset"
         }
     }
 
     var notificationTitle: String {
         switch self {
-        case .underTenPercent: return "Almost Out"
-        case .underThirtyPercent: return "Cutting It Close"
+        case .critical: return "Critical"
+        case .warning: return "Warning"
         case .closeToRunningOut: return "Will Run Out"
+        case .useItOrLoseIt: return "Use It or Lose It"
         }
     }
 
-    var body: String {
+    func body(_ limits: PriorityLimits) -> String {
         switch self {
-        case .underTenPercent: return "Under 10% left for this window."
-        case .underThirtyPercent: return "Under 30% left for this window."
+        case .critical: return "\(limits.critical)% or less left for this window."
+        case .warning: return "\(limits.warning)% or less left for this window."
         case .closeToRunningOut: return "May run out before the limit resets."
+        case .useItOrLoseIt: return "Over 50% left, resets in under 24 hours."
         }
     }
 }
@@ -74,6 +80,7 @@ enum PaceNotificationLogic {
         state: WidgetData.MeterState,
         severity: WidgetData.MeterSeverity,
         resetsAt: Date?,
+        unusedNearReset: Bool,
         previous: NotificationState
     ) -> Transition {
         var next = carriedOver(previous, resetsAt: resetsAt)
@@ -87,7 +94,7 @@ enum PaceNotificationLogic {
             next.primed = true
             next.previousBucket = currentBucket
             next.previousSeverity = severity
-            next.firedMilestones = []
+            next.firedMilestones = unusedNearReset ? [.useItOrLoseIt] : []
             return Transition(fire: [], newState: next)
         }
 
@@ -99,17 +106,18 @@ enum PaceNotificationLogic {
         if currentBucket != .untracked {
             let previousBucket = next.previousBucket
             if currentBucket >= .runningOut, previousBucket < .runningOut { candidate(.closeToRunningOut) }
-            if currentBucket < previousBucket, currentBucket <= .close {
-                next.firedMilestones.remove(.closeToRunningOut)
-            }
+            // Re-arms only once the pace eases to 90% of the limit, where Priority stops listing it as burning fast.
+            if currentBucket == .healthy { next.firedMilestones.remove(.closeToRunningOut) }
             next.previousBucket = currentBucket
         }
 
-        if severity == .critical, next.previousSeverity != .critical { candidate(.underTenPercent) }
-        if severity != .normal, next.previousSeverity == .normal { candidate(.underThirtyPercent) }
-        if severity != .critical { next.firedMilestones.remove(.underTenPercent) }
-        if severity == .normal { next.firedMilestones.remove(.underThirtyPercent) }
+        if severity == .critical, next.previousSeverity != .critical { candidate(.critical) }
+        if severity != .normal, next.previousSeverity == .normal { candidate(.warning) }
+        if severity != .critical { next.firedMilestones.remove(.critical) }
+        if severity == .normal { next.firedMilestones.remove(.warning) }
         next.previousSeverity = severity
+
+        if unusedNearReset { candidate(.useItOrLoseIt) }
 
         return Transition(fire: fire, newState: next)
     }
@@ -123,6 +131,17 @@ enum PaceNotificationLogic {
         }
         next.resetsAt = resetsAt ?? previous.resetsAt
         return next
+    }
+
+    static let useItOrLoseItLead: TimeInterval = 24 * 60 * 60
+
+    /// Only for windows longer than a day, from the provider's own reset and what's left. A session never qualifies,
+    /// and neither does a dollar limit: those are spending caps, where nothing is lost at the reset.
+    static func isUnusedNearReset(_ data: WidgetData, now: Date) -> Bool {
+        guard data.hasData, data.kind != .dollars, let resetsAt = data.resetsAt,
+              let periodDurationMs = data.periodDurationMs, periodDurationMs > MetricPeriod.dayMs else { return false }
+        let untilReset = resetsAt.timeIntervalSince(now)
+        return untilReset > 0 && untilReset <= useItOrLoseItLead && Int((data.remainingFraction * 100).rounded()) > 50
     }
 
     static let resetWindowJitterTolerance: TimeInterval = 1

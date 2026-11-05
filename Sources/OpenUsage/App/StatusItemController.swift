@@ -62,6 +62,25 @@ class MenuBarPanel: NSPanel {
         }
         super.sendEvent(event)
     }
+
+    /// Settings stays mounted offscreen after its first visit, where its shortcut recorder is disabled.
+    /// A disabled recorder still accepts focus, and then records the next key press as the global
+    /// shortcut, so the panel refuses to focus it.
+    override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
+        if let recorder = responder as? KeyboardShortcuts.RecorderCocoa, !recorder.isEnabled { return false }
+        return super.makeFirstResponder(responder)
+    }
+
+    /// Drops keyboard focus inside the panel so a clicked plain-styled control (a metric row's
+    /// Used/Left + reset toggles) doesn't keep the system focus ring lingering as a stray outline:
+    /// AppKit leaves the control first responder until focus moves, which a click on empty space or a
+    /// close otherwise never does. Skips a live text field, whose focus is the user's intent, but not the
+    /// shortcut recorder: AppKit can focus it without a click, and then it records the next key press.
+    func clearStrayFocus() {
+        let recording = (firstResponder as? NSTextView)?.delegate is KeyboardShortcuts.RecorderCocoa
+        guard recording || !(firstResponder is NSText) else { return }
+        makeFirstResponder(nil)
+    }
 }
 
 /// Owns the menu-bar status item and the panel that shows the dashboard.
@@ -83,7 +102,7 @@ final class StatusItemController: NSObject {
         panel: panel,
         statusItem: statusItem,
         isMorphing: { [weak self] in self?.heightController.isMorphing ?? false },
-        onInsidePanelClick: { [weak self] in self?.clearStrayFocus() },
+        onInsidePanelClick: { [weak self] in self?.panel.clearStrayFocus() },
         onDismiss: { [weak self] in self?.hidePanel() }
     )
     private let host: NSHostingView<AnyView>
@@ -184,10 +203,10 @@ final class StatusItemController: NSObject {
     }
 
     private func updateImage() {
-        let (accounts, limit, updateAvailable) = withObservationTracking {
+        let (accounts, burningFast, limit, updateAvailable) = withObservationTracking {
             let limit = container.hideFromScreenShare.isConcealing ? .iconOnly : container.dataStore.menuBarLimit
             let accounts = limit == .iconOnly ? [] : container.dataStore.accounts(in: container.layout.displayGroups)
-            return (accounts, limit, updater.availableUpdateVersion != nil)
+            return (accounts, container.dataStore.burningFast, limit, updater.availableUpdateVersion != nil)
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .milliseconds(50))
@@ -195,12 +214,12 @@ final class StatusItemController: NSObject {
             }
         }
         rankingTick?.cancel()
-        showStrip(accounts: accounts, limit: limit, updateAvailable: updateAvailable)
+        showStrip(accounts: accounts, burningFast: burningFast, limit: limit, updateAvailable: updateAvailable)
     }
 
-    private func showStrip(accounts: [DashboardAccount], limit: MenuBarLimit, updateAvailable: Bool) {
+    private func showStrip(accounts: [DashboardAccount], burningFast: BurningFast?, limit: MenuBarLimit, updateAvailable: Bool) {
         let now = Date()
-        let board = PriorityBoard.make(accounts: accounts, now: now)
+        let board = PriorityBoard.make(accounts: accounts, burningFast: burningFast, now: now)
         var content = MenuBarContentBuilder.build(board: board, limit: limit)
         content.updateAvailable = updateAvailable
         stripGate.show(content) { content in
@@ -213,7 +232,7 @@ final class StatusItemController: NSObject {
         rankingTick = Task { [weak self] in
             try? await Task.sleep(for: .seconds(30), tolerance: .seconds(1))
             guard !Task.isCancelled else { return }
-            self?.showStrip(accounts: accounts, limit: limit, updateAvailable: updateAvailable)
+            self?.showStrip(accounts: accounts, burningFast: burningFast, limit: limit, updateAvailable: updateAvailable)
         }
     }
 
@@ -276,7 +295,7 @@ final class StatusItemController: NSObject {
         host.layoutSubtreeIfNeeded()
 
         panel.makeKeyAndOrderFront(nil)
-        clearStrayFocus()
+        panel.clearStrayFocus()
         button.highlight(true)
         outsideClickMonitor.start()
     }
@@ -285,24 +304,13 @@ final class StatusItemController: NSObject {
         HoverTooltips.dismissAll()
         HoverPopoverState.dismissAll()
         ReducedMotionPopoverController.dismissAll()
-        clearStrayFocus()
+        panel.clearStrayFocus()
         heightController.saveBeforeClosing()
         container.popover.popoverShown = false
         panel.orderOut(nil)
         outsideClickMonitor.stop()
         statusItem.button?.highlight(false)
         heightController.finishClosing()
-    }
-
-    /// Drops keyboard focus inside the panel so a clicked plain-styled control (a metric row's
-    /// Used/Left + reset toggles) doesn't keep the system focus ring lingering as a stray outline:
-    /// AppKit leaves the control first responder until focus moves, which a click on empty space or a
-    /// close otherwise never does. Skips a live text field / shortcut recorder, whose focus is the
-    /// user's intent — mirrors the `NSText` guard `PopoverKeyReader` uses for the same reason.
-    private func clearStrayFocus() {
-        guard !ShortcutRecorderField.isRecordingActive,
-              !(panel.firstResponder is NSText) else { return }
-        panel.makeFirstResponder(nil)
     }
 
 }

@@ -59,6 +59,7 @@ struct PriorityBoardList: View {
             VStack(alignment: .leading, spacing: PanelMetrics.margin) {
                 if !board.attention.isEmpty || board.showsClearRow { attentionSection }
                 if !board.usedUp.isEmpty { usedUpSection }
+                if !board.useItOrLoseIt.isEmpty { useItOrLoseItSection }
                 if !board.notices.isEmpty { accountNotices }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -121,7 +122,7 @@ struct PriorityBoardList: View {
         VStack(alignment: .leading, spacing: 0) {
             sectionLabel("Pinned")
             ForEach(board.pinned) { pin in
-                limitRow(pin.provider, pin.data, severity: pin.severity)
+                limitRow(pin.provider, pin.data, severity: .normal)
                     .padding(.horizontal, 4)
                     .contentShape(Rectangle())
                     .contextMenu { pinMenu(pin.id, pinned: true) }
@@ -134,7 +135,8 @@ struct PriorityBoardList: View {
             sectionLabel("Running Out")
             if board.attention.isEmpty { clearRow }
             ForEach(board.attention) { item in
-                limitRow(item.provider, item.data, severity: item.reason.severity)
+                limitRow(item.provider, item.data, severity: item.reason.severity,
+                         callout: item.runOutText(now: now).map { ($0, Theme.severityTextColor(.warning)) })
                     .padding(.horizontal, 4)
                     .contentShape(Rectangle())
                     .contextMenu { pinMenu(item.id, pinned: item.isPinned) }
@@ -149,10 +151,23 @@ struct PriorityBoardList: View {
                 usedUpRow(item)
                     .padding(.horizontal, 4)
                     .contentShape(Rectangle())
-                    .contextMenu { pinMenu(item.id, pinned: false) }
+                    .contextMenu { pinMenu(item.id, pinned: item.isPinned) }
             }
         }
         .opacity(0.5)
+    }
+
+    private var useItOrLoseItSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionLabel("Use It or Lose It")
+            ForEach(board.useItOrLoseIt) { item in
+                limitRow(item.provider, item.data, severity: item.reason.severity,
+                         callout: item.resetsInText(now: now).map { ($0, Theme.severityTextColor(.normal)) })
+                    .padding(.horizontal, 4)
+                    .contentShape(Rectangle())
+                    .contextMenu { pinMenu(item.id, pinned: item.isPinned) }
+            }
+        }
     }
 
     @ViewBuilder
@@ -182,7 +197,11 @@ struct PriorityBoardList: View {
         }
     }
 
-    private func limitRow(_ provider: Provider, _ data: WidgetData, severity: WidgetData.MeterSeverity) -> some View {
+    /// `callout` takes the reset's place: when a limit listed only for burning fast runs out, or when one listed to
+    /// use it or lose it resets.
+    private func limitRow(
+        _ provider: Provider, _ data: WidgetData, severity: WidgetData.MeterSeverity, callout: (text: String, color: Color)? = nil
+    ) -> some View {
         HStack(spacing: 10) {
             PriorityGauge(fraction: data.fraction, severity: severity, icon: provider.icon)
             VStack(alignment: .leading, spacing: 1) {
@@ -202,7 +221,12 @@ struct PriorityBoardList: View {
                         .font(.system(size: 13, weight: .medium))
                         .monospacedDigit()
                 }
-                if let reset = data.compactResetText(now: now) {
+                if let callout {
+                    Text(callout.text)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(callout.color)
+                        .monospacedDigit()
+                } else if let reset = data.compactResetText(now: now) {
                     toggling(onToggleResetDisplay) {
                         Text(reset)
                             .font(.system(size: 11))
