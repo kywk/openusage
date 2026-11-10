@@ -16,9 +16,10 @@ struct PopoverScrollView<Content: View>: View {
 
 extension View {
     /// Sets `top` and `bottom` over a scrolling page of the panel. Content scrolls cleanly under the
-    /// top bar, which hides it. Content under the bottom bar blurs behind it: from macOS 26 with the
+    /// top bar, which hides it. Content under the bottom bar blurs behind it: from macOS 27 with the
     /// system's soft scroll edge effect, before it with frosted glass. Nothing is drawn behind the bottom
-    /// bar while nothing is under it.
+    /// bar while nothing is under it. While the panel isn't yet at the page's height, the bottom bar
+    /// hides what is under it behind the panel's color.
     func panelBars(@ViewBuilder top: () -> some View, @ViewBuilder bottom: () -> some View) -> some View {
         modifier(PanelBars(top: top(), bottom: bottom()))
     }
@@ -31,6 +32,9 @@ private struct PanelBars<Top: View, Bottom: View>: ViewModifier {
     let top: Top
     let bottom: Bottom
     @State private var underBottom: CGFloat = 0
+    /// Whether the panel is at another height than this page's. A tab switch draws its new rows a frame
+    /// before the panel takes their height, and in that frame they would show through the bottom bar.
+    @State private var isResizing = false
 
     func body(content: Content) -> some View {
         let barred = content
@@ -41,17 +45,25 @@ private struct PanelBars<Top: View, Bottom: View>: ViewModifier {
             } action: { _, under in
                 underBottom = under
             }
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                guard let clampHeight = MenuBarPopover.clampHeight else { return false }
+                let ideal = geometry.contentSize.height + geometry.contentInsets.top + geometry.contentInsets.bottom
+                return abs(geometry.visibleRect.height - clampHeight(ideal)) > 1
+            } action: { _, resizing in
+                isResizing = resizing
+            }
             .safeAreaInset(edge: .top, spacing: 0) {
                 top.background(Theme.panelBody)
             }
-        if #available(macOS 26, *) {
+        let footer = bottom.background { if isResizing { Theme.panelBody } }
+        if #available(macOS 27, *) {
             barred
-                .safeAreaBar(edge: .bottom, spacing: 0) { bottom }
+                .safeAreaBar(edge: .bottom, spacing: 0) { footer }
                 .scrollEdgeEffectStyle(.soft, for: .bottom)
                 .scrollEdgeEffectHidden(true, for: underBottom > 0 ? .top : .vertical)
         } else {
             barred.safeAreaInset(edge: .bottom, spacing: 0) {
-                bottom.background {
+                footer.background {
                     FooterFrost(opacity: underBottom)
                         .padding(.top, -FooterFrost.reach)
                 }
@@ -60,7 +72,7 @@ private struct PanelBars<Top: View, Bottom: View>: ViewModifier {
     }
 }
 
-/// The frosted glass behind the bottom bar before macOS 26: an in-window blur of what is under it, in
+/// The frosted glass behind the bottom bar before macOS 27: an in-window blur of what is under it, in
 /// the material whose tint comes closest to the panel's, washed halfway back to the panel's color so the
 /// tint barely shows. It is full from the panel's edge to just short of the bar's top and fades out a
 /// little above it.

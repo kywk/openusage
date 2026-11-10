@@ -1,7 +1,7 @@
 # Settings
 
 Open Settings from the panel's **⋯** menu or press **⌘,**. It has four tabs: General, Display,
-Alerts, and Advanced. Changes apply at once.
+Alerts, and Advanced. Changes apply at once. Hover the ⓘ beside a setting to see what it does.
 
 ## General
 
@@ -9,25 +9,24 @@ Alerts, and Advanced. Changes apply at once.
 - **Default Tab.** Priority or All Usage, the tab the panel opens to.
 - **Global Shortcut.** Opens and closes the panel from any app. Click the field and press the keys.
 
-## Priority icons
+## Priority
 
-- **Show In Menu Bar.** App Icon Only, or Up to 1 through Up to 5 limits, closest to running out
+- **Max Items In Menu Bar.** App Icon Only, or Up to 1 through Up to 5 limits, closest to running out
   first. Others show as a count, like `+7`. The default is Up to 3. See [Menu bar](menu-bar.md).
-
-## Priority limits
-
+- **Always Show In Menu Bar.** The menu bar lists everything Priority does, in its order: Pinned,
+  Running Out, Use It or Lose It, then Used Up. Off by default, showing only what's running out.
 - **Warning.** A limit with this much left or less turns orange and moves to Running Out. 20% to
   70% left, 30% by default.
 - **Critical.** A limit with this much left or less turns red. 5% to 25% left, 10% by default.
 - **Burning Fast.** Also lists a limit under Running Out, and in the menu bar, when it would run out
   before it resets at your current pace, however much it has left. On by default.
 - **Use It or Lose It.** Lists a limit in its own Priority section when it resets within 24 hours
-  with over 50% left, the same rule as the alert of that name. It never shows in the menu bar. On by
-  default, and separate from the alert.
+  with over 50% left, the same rule as the alert of that name. It shows in the menu bar only with
+  Always Show In Menu Bar on. On by default, and separate from the alert.
 
-They always count what's left, even with Show Usage As set to Used, and they also pick which limits
-the menu bar shows and when the Warning and Critical notifications fire. Critical always stays under
-Warning: moving one onto the other pushes the other 5% along.
+Warning and Critical always count what's left, even with Show Usage As set to Used, and they also
+pick which limits the menu bar shows and when the Warning and Critical notifications fire. Critical
+always stays under Warning: moving one onto the other pushes the other 5% along.
 
 ## Appearance
 
@@ -37,13 +36,17 @@ Warning: moving one onto the other pushes the other 5% along.
 ## Usage display
 
 - **Show Usage As.** `48% used` or `52% left`, on the dashboard and in the menu bar.
-- **Reset Times.** `Resets 3h 25m` or `Resets Wed 4 PM`.
+- **Reset Times.** `Resets 3h 25m` or `Resets Wed 4:00 PM`.
+- **Pace Marks.** A tick on each bar and Priority ring where usage would be at an even pace through
+  the window. Off by default.
 
 Click a limit's amount or reset on the dashboard to flip either one.
 
 ## Notifications
 
 All off by default. Turning the first one on asks macOS for permission.
+If notifications are off for OpenUsage, click **System Settings** in the notice to open
+**Notifications → OpenUsage** and allow them.
 
 - **Critical.** A limit drops to its Critical level or less left (10% by default).
 - **Warning.** A limit drops to its Warning level or less left (30% by default).
@@ -56,8 +59,9 @@ Each fires once per metric per reset window. Click one to open All Usage.
 
 ## Privacy
 
-- **Hide From Screen Share.** Shows the app icon instead of your usage while your screen is
-  shared or recorded. Off by default.
+- **Privacy Mode.** Shows the app icon instead of your usage, and blurs account names in the panel,
+  while your screen is shared or recorded. Copied pictures blur account names while it's on. Off by
+  default.
 - **Help Make OpenUsage Better.** Sends optional daily account counts by provider. The daily active
   ping and crash reports don't depend on it.
 

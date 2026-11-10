@@ -21,6 +21,7 @@ struct WidgetData: Hashable {
     var hasData: Bool = true
     var values: [MetricValue] = []
     var sessionStartSignal: SessionStartSignal?
+    var showsPaceMarks = true
 
     enum SessionStartSignal: Hashable {
         /// Zero usage is the fresh signal. Antigravity reports a reset instant even for an untouched
@@ -99,6 +100,11 @@ struct WidgetData: Hashable {
     }
 
     var menuBarValue: String {
+        guard hasData else { return Self.noDataValue }
+        if let valueTextOverride { return valueTextOverride }
+        if let first = values.first {
+            return MetricFormatter.number(first.number, kind: first.kind, style: .tray, currencyCode: first.currencyCode)
+        }
         if kind == .percent, let limit, limit > 0 {
             return MetricFormatter.number(displayedValue / limit * 100, kind: .percent, style: .tray)
         }
@@ -187,6 +193,13 @@ extension WidgetData {
         else { return nil }
         guard result.status == .ahead || used / ctx.limit >= 0.05 else { return nil }
         return (result.status, result.projectedUsage / ctx.limit)
+    }
+
+    /// Where the bar or ring would reach by now at an even pace through the window, measured the way it fills.
+    func paceMark(now: Date = Date()) -> Double? {
+        guard showsPaceMarks, let ctx = paceContext, roundedAtDisplayPrecision(ctx.limit - used) > 0, !isFreshSessionWindow(now: now),
+              let share = Pace.elapsedShare(resetsAt: ctx.resetsAt, periodDuration: ctx.period, now: now) else { return nil }
+        return displayMode == .remaining ? 1 - share : share
     }
 
     /// How long until the limit at the current pace, or nil when there's no pace to project from.

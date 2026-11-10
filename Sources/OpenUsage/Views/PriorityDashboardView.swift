@@ -14,7 +14,13 @@ struct PriorityDashboardView: View {
                 onToggleResetDisplay: { dataStore.resetDisplayMode.toggle() },
                 onShowAllUsage: { popover.dashboardTab = .allUsage },
                 onFixAccount: { popover.openAccounts($0) },
-                onSetPinned: { layout.setMetric($0, pinned: $1) }
+                onMetricCommand: { command in
+                    switch command {
+                    case .setPinned(let metricID, let pinned): layout.setMetric(metricID, pinned: pinned)
+                    case .hide(let metricID): layout.setMetric(metricID, shown: false)
+                    default: break
+                    }
+                }
             )
         }
     }
@@ -28,7 +34,7 @@ struct PriorityBoardList: View {
     var onToggleResetDisplay: (() -> Void)?
     var onShowAllUsage: (() -> Void)?
     var onFixAccount: ((String) -> Void)?
-    var onSetPinned: ((String, Bool) -> Void)?
+    var onMetricCommand: ((DashboardCommand) -> Void)?
 
     private static let green = Color(nsColor: .systemGreen)
     private static let gaugeSide: CGFloat = 32
@@ -38,6 +44,7 @@ struct PriorityBoardList: View {
             if !board.pinned.isEmpty { pinnedSection }
             summary
             if !board.waiting.isEmpty { waitingSection }
+            if !board.usedUp.isEmpty { usedUpSection }
         }
     }
 
@@ -58,7 +65,6 @@ struct PriorityBoardList: View {
         case .allClear, .listed:
             VStack(alignment: .leading, spacing: PanelMetrics.margin) {
                 if !board.attention.isEmpty || board.showsClearRow { attentionSection }
-                if !board.usedUp.isEmpty { usedUpSection }
                 if !board.useItOrLoseIt.isEmpty { useItOrLoseItSection }
                 if !board.notices.isEmpty { accountNotices }
             }
@@ -105,6 +111,7 @@ struct PriorityBoardList: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .truncationMode(notice.provider.isNamedByEmail ? .middle : .tail)
+                        .concealingAccountName(of: notice.provider)
                 }
             }
             .lineLimit(1)
@@ -125,7 +132,7 @@ struct PriorityBoardList: View {
                 limitRow(pin.provider, pin.data, severity: .normal)
                     .padding(.horizontal, 4)
                     .contentShape(Rectangle())
-                    .contextMenu { pinMenu(pin.id, pinned: true) }
+                    .contextMenu { metricMenu(pin.id, pinned: true) }
             }
         }
     }
@@ -139,7 +146,7 @@ struct PriorityBoardList: View {
                          callout: item.runOutText(now: now).map { ($0, Theme.severityTextColor(.warning)) })
                     .padding(.horizontal, 4)
                     .contentShape(Rectangle())
-                    .contextMenu { pinMenu(item.id, pinned: item.isPinned) }
+                    .contextMenu { metricMenu(item.id, pinned: item.isPinned) }
             }
         }
     }
@@ -151,7 +158,7 @@ struct PriorityBoardList: View {
                 usedUpRow(item)
                     .padding(.horizontal, 4)
                     .contentShape(Rectangle())
-                    .contextMenu { pinMenu(item.id, pinned: item.isPinned) }
+                    .contextMenu { metricMenu(item.id, pinned: item.isPinned) }
             }
         }
         .opacity(0.5)
@@ -165,15 +172,15 @@ struct PriorityBoardList: View {
                          callout: item.resetsInText(now: now).map { ($0, Theme.severityTextColor(.normal)) })
                     .padding(.horizontal, 4)
                     .contentShape(Rectangle())
-                    .contextMenu { pinMenu(item.id, pinned: item.isPinned) }
+                    .contextMenu { metricMenu(item.id, pinned: item.isPinned) }
             }
         }
     }
 
     @ViewBuilder
-    private func pinMenu(_ metricID: String, pinned: Bool) -> some View {
-        if let onSetPinned {
-            DashboardMenu(sections: [[DashboardMenus.pin(metricID, pinned: pinned)]]) { _ in onSetPinned(metricID, !pinned) }
+    private func metricMenu(_ metricID: String, pinned: Bool) -> some View {
+        if let onMetricCommand {
+            DashboardMenu(sections: [DashboardMenus.metric(metricID, pinned: pinned)], perform: onMetricCommand)
         }
     }
 
@@ -203,7 +210,7 @@ struct PriorityBoardList: View {
         _ provider: Provider, _ data: WidgetData, severity: WidgetData.MeterSeverity, callout: (text: String, color: Color)? = nil
     ) -> some View {
         HStack(spacing: 10) {
-            PriorityGauge(fraction: data.fraction, severity: severity, icon: provider.icon)
+            PriorityGauge(fraction: data.fraction, severity: severity, icon: provider.icon, paceMark: data.paceMark(now: now))
             VStack(alignment: .leading, spacing: 1) {
                 Text(data.title)
                     .font(.system(size: 13, weight: .medium))
@@ -212,6 +219,7 @@ struct PriorityBoardList: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .truncationMode(provider.isNamedByEmail ? .middle : .tail)
+                    .concealingAccountName(of: provider)
             }
             .lineLimit(1)
             Spacer(minLength: 0)
@@ -253,6 +261,7 @@ struct PriorityBoardList: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .truncationMode(item.provider.isNamedByEmail ? .middle : .tail)
+                    .concealingAccountName(of: item.provider)
             }
             .lineLimit(1)
             Spacer(minLength: 0)
@@ -319,11 +328,13 @@ struct PriorityBoardList: View {
     }
 }
 
-/// A limit's bar as a ring around its provider's mark, filling the same way under Used or Left.
+/// A limit's bar as a ring around its provider's mark, filling the same way under Used or Left, with a tick
+/// where it would be at an even pace.
 private struct PriorityGauge: View {
     let fraction: Double
     let severity: WidgetData.MeterSeverity
     let icon: String
+    let paceMark: Double?
 
     private static let lineWidth: CGFloat = 3
 
@@ -337,9 +348,33 @@ private struct PriorityGauge: View {
                 .trim(from: 0, to: fraction)
                 .stroke(Theme.severityColor(severity), style: StrokeStyle(lineWidth: Self.lineWidth, lineCap: .round))
                 .rotationEffect(.degrees(-90))
+            if let paceMark {
+                PaceTick(mark: paceMark)
+                    .stroke(style: StrokeStyle(lineWidth: 3.5, lineCap: .round))
+                    .blendMode(.destinationOut)
+                PaceTick(mark: paceMark)
+                    .stroke(Theme.paceMark, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+            }
             ProviderIcon(id: icon, side: 16, inset: 0.04)
         }
+        .compositingGroup()
         .frame(width: 32, height: 32)
         .accessibilityHidden(true)
+    }
+}
+
+/// A short stroke across the ring's track, clockwise from 12 o'clock by `mark` of a turn.
+private struct PaceTick: Shape {
+    let mark: Double
+
+    func path(in rect: CGRect) -> Path {
+        let angle = mark * 2 * .pi
+        func point(_ radius: CGFloat) -> CGPoint {
+            CGPoint(x: rect.midX + radius * sin(angle), y: rect.midY - radius * cos(angle))
+        }
+        var path = Path()
+        path.move(to: point(rect.width / 2 - 4.25))
+        path.addLine(to: point(rect.width / 2 + 0.75))
+        return path
     }
 }

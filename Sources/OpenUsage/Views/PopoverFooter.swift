@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 struct PopoverFooter: View {
+    @Environment(AppContainer.self) private var container
     @Environment(PopoverState.self) private var popover
     @Environment(WidgetDataStore.self) private var dataStore
     @Environment(LayoutStore.self) private var layout
@@ -14,7 +15,10 @@ struct PopoverFooter: View {
         Group {
             if screen == .dashboard {
                 HStack(alignment: .center, spacing: 8) {
-                    if !layout.displayGroups.isEmpty { nextUpdateButton }
+                    footerIdentity
+                    #if OPENUSAGE_DEVELOPMENT
+                    DemoDataLabel()
+                    #endif
                     Spacer(minLength: 8)
                     if popover.dashboardTab == .priority, liveBoard.hasRows { copyPriorityButton }
                     optionsMenu
@@ -51,13 +55,15 @@ struct PopoverFooter: View {
     }
 
     private var liveBoard: PriorityBoard {
-        dataStore.priorityBoard(in: layout.displayGroups, pinned: layout.state.priorityPinIDs, now: Date(), hidingEmails: true)
+        dataStore.priorityBoard(in: layout.displayGroups, pinned: layout.state.priorityPinIDs, now: Date(), hidingEmails: !container.hideFromScreenShare.isEnabled)
     }
 
     /// Copies the Priority tab as a picture. It reads the live board when clicked.
     private var copyPriorityButton: some View {
         Button {
-            guard ShareCardRenderer.copy(PriorityShareCard(board: liveBoard, now: Date(), appearance: colorScheme), named: "priority") else { return }
+            guard ShareCardRenderer.copy(PriorityShareCard(
+                board: liveBoard, now: Date(), appearance: colorScheme, blursAccountNames: container.hideFromScreenShare.isEnabled
+            ), named: "priority") else { return }
             popover.shareNotice.present(true)
         } label: {
             Image(systemName: "doc.on.doc")
@@ -130,6 +136,16 @@ struct PopoverFooter: View {
         )
     }
 
+    /// The version over the refresh countdown, as 0.7 showed them.
+    private var footerIdentity: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("OpenUsage \(AppInfo.version)")
+            if !layout.displayGroups.isEmpty { nextUpdateButton }
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+    }
+
     private var nextUpdateButton: some View {
         Button {
             refreshNow()
@@ -137,8 +153,6 @@ struct PopoverFooter: View {
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 HStack(spacing: 5) {
                     Text(updateStatusText(now: context.date))
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
                         .monospacedDigit()
                         .contentTransition(.numericText())
                     if isUpdating {

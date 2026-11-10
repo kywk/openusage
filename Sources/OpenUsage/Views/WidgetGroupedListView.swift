@@ -51,13 +51,12 @@ struct WidgetGroupedListView: View {
     }
 
     private func section(_ family: DashboardFamily) -> some View {
-        DashboardProviderSection(family: family) {
-            DashboardProviderHeader(family: family, onCopyScreenshot: { shareScreenshot(family.accounts.map(\.id)) })
+        DashboardProviderSection(family: family) { isHovered in
+            DashboardProviderHeader(family: family, isRevealed: isHovered, onCopyScreenshot: { shareScreenshot(family.accounts.map(\.id)) })
             .highPriorityGesture(familyDragGesture(for: family))
         } account: { account in
             accountSection(account, in: family)
         }
-        .contentShape(Rectangle())
     }
 
     private func accountSection(_ account: DashboardAccount, in family: DashboardFamily) -> some View {
@@ -95,7 +94,7 @@ struct WidgetGroupedListView: View {
             .contentShape(Rectangle())
             .contextMenu {
                 DashboardMenu(
-                    sections: [[DashboardMenus.pin(line.id, pinned: layout.isMetricPinned(line.id))]]
+                    sections: [DashboardMenus.metric(line.id, pinned: layout.isMetricPinned(line.id))]
                         + DashboardMenus.account(account, status: status.notice ?? status.staleness),
                     perform: perform
                 )
@@ -120,6 +119,8 @@ struct WidgetGroupedListView: View {
             shareScreenshot(accountIDs)
         case .setPinned(let metricID, let pinned):
             layout.setMetric(metricID, pinned: pinned)
+        case .hide(let metricID):
+            layout.setMetric(metricID, shown: false)
         }
     }
 
@@ -128,7 +129,9 @@ struct WidgetGroupedListView: View {
         guard let live = liveFamilies().first(where: { $0.accounts.contains { accountIDs.contains($0.id) } }) else { return false }
         let accounts = live.accounts.filter { accountIDs.contains($0.id) }
         let family = DashboardFamily(id: live.id, provider: accounts[0].provider, accounts: accounts)
-        guard ShareCardRenderer.share(family: family, plans: plans(for: family), appearance: colorScheme) else { return false }
+        guard ShareCardRenderer.share(
+            family: family, plans: plans(for: family), appearance: colorScheme, blursAccountNames: container.hideFromScreenShare.isEnabled
+        ) else { return false }
         popover.shareNotice.present(true)
         return true
     }

@@ -7,6 +7,8 @@ struct CapsuleSegments<Value: Hashable>: View {
     var height: CGFloat = 28
     var fontSize: CGFloat = 13
     var segmentWidth: CGFloat?
+    /// Picks a segment as the mouse goes down and moves the thumb there at once, like a native tab.
+    var selectsOnPress = false
 
     @Environment(\.reduceAnimations) private var reduceAnimations
     @Namespace private var thumb
@@ -18,12 +20,13 @@ struct CapsuleSegments<Value: Hashable>: View {
         .padding(2)
         .frame(height: height)
         .background(Theme.controlFill, in: Capsule())
+        .animation(reduceAnimations || selectsOnPress ? nil : Motion.navigation, value: selection)
     }
 
     private func segment(_ value: Value, label: String) -> some View {
         let isSelected = selection == value
         return Button {
-            withAnimation(reduceAnimations ? nil : Motion.spring) { selection = value }
+            selection = value
         } label: {
             Text(label)
                 .font(.system(size: fontSize, weight: isSelected ? .medium : .regular))
@@ -42,6 +45,9 @@ struct CapsuleSegments<Value: Hashable>: View {
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in
+            if selectsOnPress, !isSelected { selection = value }
+        })
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

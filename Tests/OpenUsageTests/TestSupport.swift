@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Vision
 import XCTest
 import os
 @testable import OpenUsage
@@ -230,6 +231,7 @@ struct HostedPopover {
     let host: NSView
     let popover: PopoverState
     let defaults: UserDefaults
+    let dataStore: WidgetDataStore
 
     @MainActor
     func open() {
@@ -252,7 +254,7 @@ extension QuietWindowTestCase {
         XCTAssertEqual(container.layout.displayGroups.count, ids.count, "the accounts never reached the dashboard")
         for id in ids {
             container.dataStore.snapshots[id] = ProviderSnapshot(
-                providerID: id, displayName: "Claude", plan: "Max 20x",
+                providerID: id, displayName: "Claude", plan: "Ultra",
                 lines: ["Session", "Weekly"].map {
                     .progress(label: $0, used: 30, limit: 100, format: .percent, resetsAt: Date().addingTimeInterval(3600), periodDurationMs: 5 * 3_600_000)
                 }
@@ -279,7 +281,24 @@ extension QuietWindowTestCase {
             MenuBarPopover.clampHeight = nil
         }
         QuietTestProcess.show(panel, in: self)
-        return HostedPopover(panel: panel, host: hosting, popover: container.popover, defaults: defaults)
+        return HostedPopover(panel: panel, host: hosting, popover: container.popover, defaults: defaults, dataStore: container.dataStore)
+    }
+}
+
+/// The lines Vision reads in an image. Accurate recognition throws `nilError` on a virtual Mac, such
+/// as an Amp Mac satellite, so there the tests read with fast recognition instead.
+func recognizedLines(in image: CGImage, usesLanguageCorrection: Bool = true) throws -> [String] {
+    func read(_ level: VNRequestTextRecognitionLevel) throws -> [String] {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = level
+        request.usesLanguageCorrection = usesLanguageCorrection
+        try VNImageRequestHandler(cgImage: image).perform([request])
+        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+    }
+    do {
+        return try read(.accurate)
+    } catch {
+        return try read(.fast)
     }
 }
 

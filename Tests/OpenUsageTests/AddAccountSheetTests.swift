@@ -1,7 +1,6 @@
 import AppKit
 import Observation
 import SwiftUI
-import Vision
 import XCTest
 @testable import OpenUsage
 
@@ -11,7 +10,7 @@ final class AddAccountSheetTests: QuietWindowTestCase {
         let defaults = isolatedDefaults()
         let url = try XCTUnwrap(URL(string: "https://example.com/authorize"))
         var opened: [URL] = []
-        let flow = AddAccountFlow(store: AccountStore(defaults: defaults, vault: InMemoryCredentialVault()), openURL: { opened.append($0) }) { _, _, _ in
+        let flow = AddAccountFlow(store: AccountStore(defaults: defaults, vault: InMemoryCredentialVault()), openURL: { opened.append($0) }) { _, _, _, _ in
             SlowLogin(prompt: .browser(url, acceptsPastedCode: false))
         }
         let presentation = SheetPresentation()
@@ -54,7 +53,7 @@ final class AddAccountSheetTests: QuietWindowTestCase {
             (.claude, .browser(url, acceptsPastedCode: true), false),
         ]
         for (provider, prompt, masked) in steps {
-            let flow = AddAccountFlow(store: store, openURL: { _ in }) { _, _, _ in SlowLogin(prompt: prompt) }
+            let flow = AddAccountFlow(store: store, openURL: { _ in }) { _, _, _, _ in SlowLogin(prompt: prompt) }
             addTeardownBlock { flow.cancel() }
             flow.choose(provider)
             try await waitUntil { flow.prompt != nil }
@@ -89,9 +88,7 @@ final class AddAccountSheetTests: QuietWindowTestCase {
     private func readText(in host: NSView) throws -> String {
         let rep = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         host.cacheDisplay(in: host.bounds, to: rep)
-        let request = VNRecognizeTextRequest()
-        try VNImageRequestHandler(cgImage: XCTUnwrap(rep.cgImage)).perform([request])
-        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        return try recognizedLines(in: XCTUnwrap(rep.cgImage)).joined(separator: " ")
     }
 
     private func textFields(in view: NSView) -> [NSTextField] {
